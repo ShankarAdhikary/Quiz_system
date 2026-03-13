@@ -161,8 +161,9 @@
                             <span class="text-sm">Current Turn:</span>
                             <span class="team-tag" id="r2CurrentTeam"
                                 style="background:var(--team1-bg);color:var(--team1)">Team 1</span>
-                            <button class="btn btn-sm btn-outline" onclick="r2NextTurn()">Skip Turn &#9654;</button>
+                            <button class="btn btn-sm btn-outline" onclick="r2NextTurn()">Next Turn &#9654;</button>
                         </div>
+                        <div class="btn-group mt-8" id="r2TurnBtns"></div>
                         <div class="r2-grid" id="r2Grid"></div>
                     </div>
 
@@ -180,6 +181,7 @@
                             <button class="btn btn-success" onclick="r2AnswerCorrect()">&#10004; Correct</button>
                             <button class="btn btn-danger" onclick="r2AnswerWrong()">&#10008; Wrong / Pass</button>
                             <button class="btn btn-warning" onclick="r2RevealAnswer()">&#128065; Reveal</button>
+                            <button class="btn btn-primary" onclick="r2FinalizeQuestion()">Next Question &#9654;</button>
                         </div>
                         <div id="r2BuzzerArea" style="display:none" class="mt-16">
                             <hr>
@@ -578,7 +580,7 @@
             currentRound: 0,
             questions: JSON.parse(JSON.stringify(SAMPLE_QUESTIONS)),
             r1: { qIndex: 0, currentTeam: 0, timerRunning: false, timerVal: 60, selectedOption: -1, answered: false, revealed: false },
-            r2: { turnIndex: 0, board: [], activeCell: null, buzzerTeam: -1 },
+            r2: { turnIndex: 0, board: [], activeCell: null, buzzerTeam: -1, resolved: false },
             r3: { qIndex: 0, bets: [0, 0, 0, 0], betsLocked: false, activeTeam: -1, challengerTeam: -1, currentBet: 0 },
             r4: { qIndex: 0, optionsShown: false, buzzedTeam: -1, buzzedEarly: false, active: false }
         };
@@ -645,7 +647,7 @@
             if (!confirm('Reset ALL data including scores and questions?')) return;
             STATE.teams.forEach(t => t.score = 0);
             STATE.r1 = { qIndex: 0, currentTeam: 0, timerRunning: false, timerVal: 60, selectedOption: -1, answered: false, revealed: false };
-            STATE.r2 = { turnIndex: 0, board: [], activeCell: null, buzzerTeam: -1 };
+            STATE.r2 = { turnIndex: 0, board: [], activeCell: null, buzzerTeam: -1, resolved: false };
             STATE.r3 = { qIndex: 0, bets: [0, 0, 0, 0], betsLocked: false, activeTeam: -1, challengerTeam: -1, currentBet: 0 };
             STATE.r4 = { qIndex: 0, optionsShown: false, buzzedTeam: -1, buzzedEarly: false, active: false };
             STATE.questions = JSON.parse(JSON.stringify(SAMPLE_QUESTIONS));
@@ -948,13 +950,25 @@
         }
 
         function r2UpdateTurn() {
-            const team = STATE.teams[STATE.r2.turnIndex % 4];
+            const teamIdx = STATE.r2.turnIndex % 4;
+            const team = STATE.teams[teamIdx];
             const colors = ['var(--team1)', 'var(--team2)', 'var(--team3)', 'var(--team4)'];
             const bgs = ['var(--team1-bg)', 'var(--team2-bg)', 'var(--team3-bg)', 'var(--team4-bg)'];
             const el = document.getElementById('r2CurrentTeam');
             el.textContent = team.name;
-            el.style.background = bgs[STATE.r2.turnIndex % 4];
-            el.style.color = colors[STATE.r2.turnIndex % 4];
+            el.style.background = bgs[teamIdx];
+            el.style.color = colors[teamIdx];
+
+            const btns = document.getElementById('r2TurnBtns');
+            if (btns) {
+                btns.innerHTML = STATE.teams.map((t, i) => `<button class="btn btn-sm ${i === teamIdx ? 'btn-primary' : 'btn-outline'}" onclick="r2SetTurn(${i})">${t.name}</button>`).join('');
+            }
+        }
+
+        function r2SetTurn(teamIdx) {
+            STATE.r2.turnIndex = teamIdx;
+            r2UpdateTurn();
+            sendToDisplay('R2_TURN', { turnTeam: teamIdx, teams: STATE.teams });
         }
 
         function r2NextTurn() {
@@ -980,6 +994,7 @@
             document.getElementById('r2QAnswer').textContent = '';
             document.getElementById('r2QuestionCard').style.display = 'block';
             document.getElementById('r2BuzzerArea').style.display = 'none';
+            STATE.r2.resolved = false;
 
             sendToDisplay('SHOW_QUESTION', { round: 2, question: q, meta: `${cell.categoryLabel} — ${cell.points} pts`, board: STATE.r2.board });
 
@@ -1012,7 +1027,7 @@
             cell.status = 'used';
             sfxCorrect();
             logEvent('R2', `${STATE.teams[teamIdx].name} +${cell.points} (${cell.categoryLabel} ${cell.points})`);
-            r2FinishCell();
+            STATE.r2.resolved = true;
             sendToDisplay('R2_RESULT', { correct: true, teamIdx, delta: cell.points, teams: STATE.teams, board: STATE.r2.board });
         }
 
@@ -1051,44 +1066,6 @@
             // Show host controls for challenge result
             document.getElementById('r2BuzzerActions').style.display = 'flex';
         }
-
-        // Host marks challenge correct
-        function r2BuzzerCorrect() {
-            const cell = STATE.r2.board[STATE.r2.activeCell];
-            STATE.teams[STATE.r2.buzzerTeam].score += cell.points;
-            cell.status = 'used';
-            sfxCorrect();
-            logEvent('R2', `${STATE.teams[STATE.r2.buzzerTeam].name} +${cell.points} (challenge correct)`);
-            r2RevealAnswer();
-            r2FinishCell();
-            notifyBuzzerServerQuestionOver();
-            sendToDisplay('R2_RESULT', { correct: true, teamIdx: STATE.r2.buzzerTeam, delta: cell.points, teams: STATE.teams, board: STATE.r2.board });
-        }
-
-        // Host marks challenge incorrect
-        function r2BuzzerWrong() {
-            const cell = STATE.r2.board[STATE.r2.activeCell];
-            STATE.teams[STATE.r2.buzzerTeam].score -= cell.points;
-            cell.status = 'used';
-            sfxWrong();
-            logEvent('R2', `${STATE.teams[STATE.r2.buzzerTeam].name} -${cell.points} (challenge wrong)`);
-            r2RevealAnswer();
-            r2FinishCell();
-            notifyBuzzerServerQuestionOver();
-            sendToDisplay('R2_RESULT', { correct: false, teamIdx: STATE.r2.buzzerTeam, delta: -cell.points, teams: STATE.teams, board: STATE.r2.board });
-        }
-
-        // Host skips challenge (no one challenges)
-        function r2BuzzerSkip() {
-            const cell = STATE.r2.board[STATE.r2.activeCell];
-            cell.status = 'used';
-            logEvent('R2', `${cell.categoryLabel} ${cell.points} — no challenge, skipped`);
-            r2RevealAnswer();
-            r2FinishCell();
-            notifyBuzzerServerQuestionOver();
-            sendToDisplay('R2_RESULT', { correct: false, teamIdx: -1, delta: 0, teams: STATE.teams, board: STATE.r2.board });
-        }
-
         function r2BuzzerHit(teamIdx) {
             STATE.r2.buzzerTeam = teamIdx;
             sfxBuzzer();
@@ -1105,9 +1082,9 @@
             cell.status = 'used';
             sfxCorrect();
             logEvent('R2', `${STATE.teams[STATE.r2.buzzerTeam].name} +${cell.points} (buzzer correct)`);
-            r2FinishCell();
             notifyBuzzerServerQuestionOver();
             sendToDisplay('R2_RESULT', { correct: true, teamIdx: STATE.r2.buzzerTeam, delta: cell.points, teams: STATE.teams, board: STATE.r2.board });
+            STATE.r2.resolved = true;
         }
 
         function r2BuzzerWrong() {
@@ -1116,18 +1093,24 @@
             cell.status = 'used';
             sfxWrong();
             logEvent('R2', `${STATE.teams[STATE.r2.buzzerTeam].name} -${cell.points} (buzzer wrong)`);
-            r2FinishCell();
             notifyBuzzerServerQuestionOver();
             sendToDisplay('R2_RESULT', { correct: false, teamIdx: STATE.r2.buzzerTeam, delta: -cell.points, teams: STATE.teams, board: STATE.r2.board });
+            STATE.r2.resolved = true;
         }
 
         function r2BuzzerSkip() {
             const cell = STATE.r2.board[STATE.r2.activeCell];
             cell.status = 'used';
             logEvent('R2', `${cell.categoryLabel} ${cell.points} — no buzzer, skipped`);
-            r2FinishCell();
             notifyBuzzerServerQuestionOver();
             sendToDisplay('R2_RESULT', { correct: false, teamIdx: -1, delta: 0, teams: STATE.teams, board: STATE.r2.board });
+            STATE.r2.resolved = true;
+        }
+
+        function r2FinalizeQuestion() {
+            if (STATE.r2.activeCell === null || !STATE.r2.resolved) return;
+            r2FinishCell();
+            STATE.r2.resolved = false;
         }
 
         function r2RevealAnswer() {
@@ -1242,6 +1225,13 @@
             document.querySelectorAll('#r3AnswerBtns .btn').forEach(b => b.classList.remove('btn-primary'));
             document.querySelectorAll('#r3AnswerBtns .btn')[idx].classList.add('btn-primary');
             document.getElementById('r3EvalBtns').style.display = 'flex';
+            document.getElementById('r3ChallengeZone').style.display = 'block';
+            const cbEl = document.getElementById('r3ChallengeBtns');
+            cbEl.innerHTML = STATE.teams.map((t, i) => {
+                if (i === STATE.r3.activeTeam) return '';
+                return `<button class="btn btn-outline btn-sm" onclick="r3SelectChallenger(${i})">${t.name}</button>`;
+            }).join('');
+            document.getElementById('r3ChallengeEvalBtns').style.display = 'none';
             sendToDisplay('R3_TEAM_ANSWERING', { teamIdx: idx, teamName: STATE.teams[idx].name });
         }
 
@@ -1263,14 +1253,6 @@
             logEvent('R3', `${STATE.teams[STATE.r3.activeTeam].name} -${bet} (bet wrong)`);
             sendToDisplay('R3_RESULT', { correct: false, teamIdx: STATE.r3.activeTeam, delta: -bet, teams: STATE.teams });
 
-            // Open challenge window
-            document.getElementById('r3ChallengeZone').style.display = 'block';
-            const cbEl = document.getElementById('r3ChallengeBtns');
-            cbEl.innerHTML = STATE.teams.map((t, i) => {
-                if (i === STATE.r3.activeTeam) return '';
-                return `<button class="btn btn-outline btn-sm" onclick="r3SelectChallenger(${i})">${t.name}</button>`;
-            }).join('');
-            document.getElementById('r3ChallengeEvalBtns').style.display = 'none';
         }
 
         function r3RevealAnswer() {

@@ -77,6 +77,17 @@
                             Initialize</button>
                         <button class="btn btn-outline" onclick="resetAll()">&#8635; Reset Everything</button>
                     </div>
+                    <hr>
+                    <div class="team-sites-section" style="margin-top:24px;">
+                        <h3>Team Sites</h3>
+                        <p class="text-sm text-muted">Share these links with each team to join from their device:</p>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+                            <a class="btn btn-outline" href="team1.html" target="_blank">Team 1 Site</a>
+                            <a class="btn btn-outline" href="team2.html" target="_blank">Team 2 Site</a>
+                            <a class="btn btn-outline" href="team3.html" target="_blank">Team 3 Site</a>
+                            <a class="btn btn-outline" href="team4.html" target="_blank">Team 4 Site</a>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -711,8 +722,9 @@
         }
 
         function r1LoadQuestion() {
-            const qs = STATE.questions.round1;
-            if (STATE.r1.qIndex >= qs.length) {
+            // Only allow 8 questions in Round 1
+            const qs = STATE.questions.round1.slice(0, 8);
+            if (STATE.r1.qIndex >= 8) {
                 alert('Round 1 complete!');
                 sendToDisplay('ROUND_COMPLETE', { round: 1, teams: STATE.teams });
                 return;
@@ -726,7 +738,7 @@
             STATE.r1.timerRunning = false;
             clearInterval(timerInterval);
 
-            document.getElementById('r1QCounter').textContent = `Question ${STATE.r1.qIndex + 1} / ${qs.length}`;
+            document.getElementById('r1QCounter').textContent = `Question ${STATE.r1.qIndex + 1} / 8`;
             document.getElementById('r1QText').textContent = q.text;
             document.getElementById('r1Timer').textContent = '60';
             document.getElementById('r1Timer').className = 'timer-display';
@@ -757,6 +769,13 @@
 
             // Send options to team's buzzer device
             r1SendOptionsToDevice(teamIdx, q);
+
+            // Auto-start timer after question loads
+            setTimeout(() => {
+                if (!STATE.r1.timerRunning && !STATE.r1.answered && !STATE.r1.revealed) {
+                    r1StartTimer();
+                }
+            }, 500); // slight delay to ensure UI is ready
         }
 
         function r1SendOptionsToDevice(teamIdx, q) {
@@ -956,13 +975,34 @@
             document.getElementById('r2QMeta').textContent = `${cell.categoryLabel} — ${cell.points} pts`;
             document.getElementById('r2QText').textContent = q.text;
             const labels = ['A', 'B', 'C', 'D'];
-            document.getElementById('r2QOptions').innerHTML = q.options.map((o, i) => `<div class="q-option" id="r2opt${i}">${labels[i]}. ${o}</div>`).join('');
+            document.getElementById('r2QOptions').innerHTML = q.options.map((o, i) => `<div class=\"q-option\" id=\"r2opt${i}\">${labels[i]}. ${o}</div>`).join('');
             document.getElementById('r2QAnswer').className = 'q-answer';
             document.getElementById('r2QAnswer').textContent = '';
             document.getElementById('r2QuestionCard').style.display = 'block';
             document.getElementById('r2BuzzerArea').style.display = 'none';
 
             sendToDisplay('SHOW_QUESTION', { round: 2, question: q, meta: `${cell.categoryLabel} — ${cell.points} pts`, board: STATE.r2.board });
+
+            // Auto-start 60s timer for round 2 question
+            if (window.r2TimerInterval) clearInterval(window.r2TimerInterval);
+            let timerVal = 60;
+            const timerEl = document.getElementById('r2Timer');
+            timerEl.textContent = timerVal;
+            timerEl.className = 'timer-display';
+            window.r2TimerInterval = setInterval(() => {
+                timerVal--;
+                timerEl.textContent = timerVal;
+                if (timerVal <= 10) timerEl.className = 'timer-display critical';
+                else if (timerVal <= 20) timerEl.className = 'timer-display warning';
+                if (timerVal <= 10) sfxWarning();
+                else sfxTick();
+                if (timerVal <= 0) {
+                    clearInterval(window.r2TimerInterval);
+                    sfxTimeUp();
+                    // Auto-mark as wrong/pass if time up
+                    r2AnswerWrong();
+                }
+            }, 1000);
         }
 
         function r2AnswerCorrect() {
@@ -982,13 +1022,13 @@
             STATE.teams[teamIdx].score -= cell.points;
             updateSidebarScores();
 
-            // Open buzzer for other teams
+            // Open challenge phase for other teams
             document.getElementById('r2BuzzerArea').style.display = 'block';
             const buzzerEl = document.getElementById('r2BuzzerBtns');
             const tClasses = ['t1', 't2', 't3', 't4'];
             buzzerEl.innerHTML = STATE.teams.map((t, i) => {
                 if (i === teamIdx) return '';
-                return `<div class="r4-buzzer-btn ${tClasses[i]}" onclick="r2BuzzerHit(${i})">${t.name}<div class="shortcut">Click to buzz</div></div>`;
+                return `<div class="r4-buzzer-btn ${tClasses[i]}" onclick="r2ChallengeTeam(${i})">${t.name}<div class="shortcut">Challenge</div></div>`;
             }).join('');
             document.getElementById('r2BuzzerActions').style.display = 'none';
 
@@ -996,9 +1036,57 @@
             logEvent('R2', `${STATE.teams[teamIdx].name} -${cell.points} (wrong/pass)`);
             sendToDisplay('R2_WRONG_OPEN_BUZZER', { teamIdx, delta: -cell.points, teams: STATE.teams, board: STATE.r2.board });
 
-            // Enable remote buzzers for other teams
+            // Enable remote buzzers for other teams (if needed)
             STATE.r2.buzzerTeam = -1;
-            notifyBuzzerServerEnable('Buzzer — press to answer!', `${cell.categoryLabel} ${cell.points}`, 'Round 2 — Grid Matrix');
+            notifyBuzzerServerEnable('Challenge — press to answer!', `${cell.categoryLabel} ${cell.points}`, 'Round 2 — Grid Matrix');
+        }
+
+        // Challenge phase logic for round 2
+        function r2ChallengeTeam(challengerIdx) {
+            STATE.r2.buzzerTeam = challengerIdx;
+            sfxBuzzer();
+            document.querySelectorAll('#r2BuzzerBtns .r4-buzzer-btn').forEach(b => b.style.opacity = '0.3');
+            document.querySelector(`#r2BuzzerBtns .t${challengerIdx + 1}`).style.opacity = '1';
+            document.querySelector(`#r2BuzzerBtns .t${challengerIdx + 1}`).classList.add('buzzed');
+            // Show host controls for challenge result
+            document.getElementById('r2BuzzerActions').style.display = 'flex';
+        }
+
+        // Host marks challenge correct
+        function r2BuzzerCorrect() {
+            const cell = STATE.r2.board[STATE.r2.activeCell];
+            STATE.teams[STATE.r2.buzzerTeam].score += cell.points;
+            cell.status = 'used';
+            sfxCorrect();
+            logEvent('R2', `${STATE.teams[STATE.r2.buzzerTeam].name} +${cell.points} (challenge correct)`);
+            r2RevealAnswer();
+            r2FinishCell();
+            notifyBuzzerServerQuestionOver();
+            sendToDisplay('R2_RESULT', { correct: true, teamIdx: STATE.r2.buzzerTeam, delta: cell.points, teams: STATE.teams, board: STATE.r2.board });
+        }
+
+        // Host marks challenge incorrect
+        function r2BuzzerWrong() {
+            const cell = STATE.r2.board[STATE.r2.activeCell];
+            STATE.teams[STATE.r2.buzzerTeam].score -= cell.points;
+            cell.status = 'used';
+            sfxWrong();
+            logEvent('R2', `${STATE.teams[STATE.r2.buzzerTeam].name} -${cell.points} (challenge wrong)`);
+            r2RevealAnswer();
+            r2FinishCell();
+            notifyBuzzerServerQuestionOver();
+            sendToDisplay('R2_RESULT', { correct: false, teamIdx: STATE.r2.buzzerTeam, delta: -cell.points, teams: STATE.teams, board: STATE.r2.board });
+        }
+
+        // Host skips challenge (no one challenges)
+        function r2BuzzerSkip() {
+            const cell = STATE.r2.board[STATE.r2.activeCell];
+            cell.status = 'used';
+            logEvent('R2', `${cell.categoryLabel} ${cell.points} — no challenge, skipped`);
+            r2RevealAnswer();
+            r2FinishCell();
+            notifyBuzzerServerQuestionOver();
+            sendToDisplay('R2_RESULT', { correct: false, teamIdx: -1, delta: 0, teams: STATE.teams, board: STATE.r2.board });
         }
 
         function r2BuzzerHit(teamIdx) {

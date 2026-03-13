@@ -4,77 +4,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Team 1 Dashboard</title>
-    <link rel="stylesheet" href="css/display.css">
+    <title>Team 1 Buzzer</title>
+    <link rel="stylesheet" href="css/host.css">
 </head>
 
-<body>
-    <h1>Team 1 Dashboard</h1>
-    <div id="question-container"></div>
-    <form id="option-form">
-        <div id="options-container"></div>
-        <button type="submit">Submit Answer</button>
-    </form>
-    <div id="result"></div>
-    <script src="js/questions.js"></script>
+<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;">
+    <div class="card" style="max-width:560px;width:100%;text-align:center;">
+        <h2>Team 1 Device</h2>
+        <p class="card-desc">If you are not redirected automatically, tap the button below.</p>
+        <a class="btn btn-primary btn-lg" id="openBtn" href="#">Open Team 1 Buzzer</a>
+    </div>
+
     <script>
-        // --- WebSocket Setup ---
-        const teamIdx = 0; // Team 1
-        const serverUrl = window.location.hostname + ':3000';
-        const ws = new WebSocket(`ws://${serverUrl}`);
-
-        ws.onopen = () => {
-            ws.send(JSON.stringify({ type: 'REGISTER_BUZZER', teamIdx }));
-        };
-
-        // --- Question/Option Rendering ---
-        const questionContainer = document.getElementById('question-container');
-        const optionsContainer = document.getElementById('options-container');
-        const resultDiv = document.getElementById('result');
-        let currentQuestion = null;
-
-        ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'R1_OPTIONS') {
-                renderQuestion(msg.question, msg.options, msg.qLabel);
-            } else if (msg.type === 'RESULT') {
-                resultDiv.textContent = msg.correct ? 'Correct!' : 'Incorrect!';
-            } else if (msg.type === 'QUESTION_OVER') {
-                questionContainer.textContent = '';
-                optionsContainer.innerHTML = '';
-                resultDiv.textContent = '';
-            }
-        };
-
-        function renderQuestion(question, options, qLabel) {
-            currentQuestion = question;
-            questionContainer.textContent = (qLabel ? qLabel + ': ' : '') + question.text;
-            optionsContainer.innerHTML = '';
-            options.forEach((opt, idx) => {
-                const label = document.createElement('label');
-                const radio = document.createElement('input');
-                radio.type = 'radio';
-                radio.name = 'option';
-                radio.value = idx;
-                label.appendChild(radio);
-                label.appendChild(document.createTextNode(opt));
-                optionsContainer.appendChild(label);
-                optionsContainer.appendChild(document.createElement('br'));
-            });
-        }
-
-        document.getElementById('option-form').onsubmit = function (e) {
-            e.preventDefault();
-            const selected = optionsContainer.querySelector('input[name="option"]:checked');
-            if (!selected || !currentQuestion) return;
-            ws.send(JSON.stringify({
-                type: 'R1_ANSWER',
-                teamIdx,
-                selectedOption: parseInt(selected.value),
-                timestamp: Date.now()
-            }));
-            resultDiv.textContent = 'Answer submitted!';
-        };
+        const target = `buzzer.html?team=1&server=${window.location.host}`;
+        const openBtn = document.getElementById('openBtn');
+        openBtn.setAttribute('href', target);
+        window.location.replace(target);
     </script>
 </body>
 

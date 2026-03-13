@@ -580,7 +580,7 @@
             currentRound: 0,
             questions: JSON.parse(JSON.stringify(SAMPLE_QUESTIONS)),
             r1: { qIndex: 0, currentTeam: 0, timerRunning: false, timerVal: 60, selectedOption: -1, answered: false, revealed: false },
-            r2: { turnIndex: 0, board: [], activeCell: null, buzzerTeam: -1, resolved: false },
+            r2: { turnIndex: 0, board: [], activeCell: null, buzzerTeam: -1, resolved: false, wrongOpened: false },
             r3: { qIndex: 0, bets: [0, 0, 0, 0], betsLocked: false, activeTeam: -1, challengerTeam: -1, currentBet: 0 },
             r4: { qIndex: 0, optionsShown: false, buzzedTeam: -1, buzzedEarly: false, active: false }
         };
@@ -647,7 +647,7 @@
             if (!confirm('Reset ALL data including scores and questions?')) return;
             STATE.teams.forEach(t => t.score = 0);
             STATE.r1 = { qIndex: 0, currentTeam: 0, timerRunning: false, timerVal: 60, selectedOption: -1, answered: false, revealed: false };
-            STATE.r2 = { turnIndex: 0, board: [], activeCell: null, buzzerTeam: -1, resolved: false };
+            STATE.r2 = { turnIndex: 0, board: [], activeCell: null, buzzerTeam: -1, resolved: false, wrongOpened: false };
             STATE.r3 = { qIndex: 0, bets: [0, 0, 0, 0], betsLocked: false, activeTeam: -1, challengerTeam: -1, currentBet: 0 };
             STATE.r4 = { qIndex: 0, optionsShown: false, buzzedTeam: -1, buzzedEarly: false, active: false };
             STATE.questions = JSON.parse(JSON.stringify(SAMPLE_QUESTIONS));
@@ -977,6 +977,13 @@
             sendToDisplay('R2_TURN', { turnTeam: STATE.r2.turnIndex % 4, teams: STATE.teams });
         }
 
+        function r2ClearTimer() {
+            if (window.r2TimerInterval) {
+                clearInterval(window.r2TimerInterval);
+                window.r2TimerInterval = null;
+            }
+        }
+
         function r2SelectCell(idx) {
             const cell = STATE.r2.board[idx];
             if (cell.status !== 'available') return;
@@ -995,11 +1002,12 @@
             document.getElementById('r2QuestionCard').style.display = 'block';
             document.getElementById('r2BuzzerArea').style.display = 'none';
             STATE.r2.resolved = false;
+            STATE.r2.wrongOpened = false;
 
             sendToDisplay('SHOW_QUESTION', { round: 2, question: q, meta: `${cell.categoryLabel} — ${cell.points} pts`, board: STATE.r2.board });
 
             // Auto-start 60s timer for round 2 question
-            if (window.r2TimerInterval) clearInterval(window.r2TimerInterval);
+            r2ClearTimer();
             let timerVal = 60;
             const timerEl = document.getElementById('r2Timer');
             timerEl.textContent = timerVal;
@@ -1021,6 +1029,7 @@
         }
 
         function r2AnswerCorrect() {
+            if (STATE.r2.activeCell === null || STATE.r2.resolved || STATE.r2.wrongOpened) return;
             const cell = STATE.r2.board[STATE.r2.activeCell];
             const teamIdx = STATE.r2.turnIndex % 4;
             STATE.teams[teamIdx].score += cell.points;
@@ -1028,14 +1037,18 @@
             sfxCorrect();
             logEvent('R2', `${STATE.teams[teamIdx].name} +${cell.points} (${cell.categoryLabel} ${cell.points})`);
             STATE.r2.resolved = true;
+            r2ClearTimer();
             sendToDisplay('R2_RESULT', { correct: true, teamIdx, delta: cell.points, teams: STATE.teams, board: STATE.r2.board });
         }
 
         function r2AnswerWrong() {
+            if (STATE.r2.activeCell === null || STATE.r2.wrongOpened || STATE.r2.resolved) return;
             const cell = STATE.r2.board[STATE.r2.activeCell];
             const teamIdx = STATE.r2.turnIndex % 4;
             STATE.teams[teamIdx].score -= cell.points;
             updateSidebarScores();
+
+            r2ClearTimer();
 
             // Open challenge phase for other teams
             document.getElementById('r2BuzzerArea').style.display = 'block';
@@ -1053,6 +1066,7 @@
 
             // Enable remote buzzers for other teams (if needed)
             STATE.r2.buzzerTeam = -1;
+            STATE.r2.wrongOpened = true;
             notifyBuzzerServerEnable('Challenge — press to answer!', `${cell.categoryLabel} ${cell.points}`, 'Round 2 — Grid Matrix');
         }
 
@@ -1077,6 +1091,7 @@
         }
 
         function r2BuzzerCorrect() {
+            if (STATE.r2.activeCell === null || STATE.r2.resolved) return;
             const cell = STATE.r2.board[STATE.r2.activeCell];
             STATE.teams[STATE.r2.buzzerTeam].score += cell.points;
             cell.status = 'used';
@@ -1085,9 +1100,11 @@
             notifyBuzzerServerQuestionOver();
             sendToDisplay('R2_RESULT', { correct: true, teamIdx: STATE.r2.buzzerTeam, delta: cell.points, teams: STATE.teams, board: STATE.r2.board });
             STATE.r2.resolved = true;
+            STATE.r2.wrongOpened = false;
         }
 
         function r2BuzzerWrong() {
+            if (STATE.r2.activeCell === null || STATE.r2.resolved) return;
             const cell = STATE.r2.board[STATE.r2.activeCell];
             STATE.teams[STATE.r2.buzzerTeam].score -= cell.points;
             cell.status = 'used';
@@ -1096,21 +1113,26 @@
             notifyBuzzerServerQuestionOver();
             sendToDisplay('R2_RESULT', { correct: false, teamIdx: STATE.r2.buzzerTeam, delta: -cell.points, teams: STATE.teams, board: STATE.r2.board });
             STATE.r2.resolved = true;
+            STATE.r2.wrongOpened = false;
         }
 
         function r2BuzzerSkip() {
+            if (STATE.r2.activeCell === null || STATE.r2.resolved) return;
             const cell = STATE.r2.board[STATE.r2.activeCell];
             cell.status = 'used';
             logEvent('R2', `${cell.categoryLabel} ${cell.points} — no buzzer, skipped`);
             notifyBuzzerServerQuestionOver();
             sendToDisplay('R2_RESULT', { correct: false, teamIdx: -1, delta: 0, teams: STATE.teams, board: STATE.r2.board });
             STATE.r2.resolved = true;
+            STATE.r2.wrongOpened = false;
         }
 
         function r2FinalizeQuestion() {
             if (STATE.r2.activeCell === null || !STATE.r2.resolved) return;
+            r2ClearTimer();
             r2FinishCell();
             STATE.r2.resolved = false;
+            STATE.r2.activeCell = null;
         }
 
         function r2RevealAnswer() {
@@ -1236,16 +1258,19 @@
         }
 
         function r3AnswerCorrect() {
+            if (STATE.r3.activeTeam < 0) return;
             const bet = STATE.r3.bets[STATE.r3.activeTeam];
             STATE.teams[STATE.r3.activeTeam].score += bet;
             updateSidebarScores();
             sfxCorrect();
             logEvent('R3', `${STATE.teams[STATE.r3.activeTeam].name} +${bet} (bet correct)`);
             sendToDisplay('R3_RESULT', { correct: true, teamIdx: STATE.r3.activeTeam, delta: bet, teams: STATE.teams });
+            document.getElementById('r3ChallengeZone').style.display = 'none';
             // No challenge if correct
         }
 
         function r3AnswerWrong() {
+            if (STATE.r3.activeTeam < 0) return;
             const bet = STATE.r3.bets[STATE.r3.activeTeam];
             STATE.teams[STATE.r3.activeTeam].score -= bet;
             updateSidebarScores();
